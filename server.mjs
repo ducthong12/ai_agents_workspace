@@ -34,7 +34,7 @@ let usage={records:[],sources:[],warnings:[]},busy=false,lastSync=null,syncError
 const cli=await discoverCLIs(),jobs=[],running=new Map();
 const mcp=await createMcpMonitor(cli,base,path.join(data,'mcp-snapshot.json'));
 const openClaudeURL=async url=>{if(!url.startsWith('claude://'))throw Error('URI Claude không hợp lệ');await new Promise((resolve,reject)=>{const p=spawn('explorer.exe',[url],{windowsHide:true,detached:true,stdio:'ignore'});p.once('error',reject);p.once('spawn',()=>{p.unref();resolve();});});};
-let budgets;const claudeDesktop=createClaudeDesktop({data,openURL:openClaudeURL,checkBudget:args=>budgets.check(args)});
+let budgets;const claudeDesktop=createClaudeDesktop({data,openURL:openClaudeURL,docsRoot:brandRoot,checkBudget:args=>budgets.check(args)});
 const tasks=await createTaskMonitor({cli,base,data,claudeDesktop,workspaceRoot:workRoot});
 const studio=await createStudio({cli,base,data,claudeDesktop,checkBudget:args=>budgets.check(args),openExternal:async url=>{if(!url.startsWith('https://claude.ai/'))throw Error('URL không hợp lệ');await run('explorer.exe',[url],{windowsHide:true});}});
 budgets=await createBudgetMonitor({data,readCodexLimits:async()=>{const client=await connectServer(cli.Codex,'codex_app',base,{desktopAction:true});try{return await client.call('get_usage_limits',{},{timeoutMs:8000});}finally{client.close();}},readContext:async(provider,id)=>(await studio.traceThread(id,provider==='claude'?'claude-code':'codex')).contextBudget});

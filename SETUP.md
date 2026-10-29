@@ -119,3 +119,5 @@ Không commit/copy `data/`, `.env*`, invitations thật, log phiên, local instr
 Chạy kiểm tra: `node --test`.
 
 Sau khi đổi workspace qua giao diện, khởi động lại server để các monitor dùng root mới; biến TN_WORK_ROOT được ưu tiên hơn giá trị lưu trong giao diện. Giữ cấu hình executable/path trong script local, không commit thông tin riêng của máy.
+
+Các phiên mở mới nhận đường dẫn TN_AI_DOCS_ROOT ngay trong file yêu cầu. Ghi chú tính năng mới đặt dưới <nhãn hàng>/<repo>/features/<feature>; chưa xác định nhãn hàng thì dùng Chung. Không cần tạo AI-Hub trên máy mới chỉ để chạy luồng này. Các nguồn AI-Hub cũ đã nối vẫn đọc được.
