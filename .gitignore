@@ -1,0 +1,11 @@
+data/
+node_modules/
+*.log
+.env*
+invitations.json
+AGENTS.local.md
+CLAUDE.local.md
+.claude/settings.local.json
+test-results/
+playwright-report/
+AGENTS.override.md

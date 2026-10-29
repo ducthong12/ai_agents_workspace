@@ -1,0 +1,10 @@
+import {setPassword} from './auth.mjs';
+import {createInterface} from 'node:readline/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const io=createInterface({input:process.stdin,output:process.stdout});
+const username=(await io.question('Username [admin]: ')).trim()||'admin';io.close();
+if(!process.stdin.isTTY)throw Error('Chạy trong terminal tương tác để nhập mật khẩu an toàn.');
+process.stdout.write('Password (ít nhất 8 ký tự): ');process.stdin.setRawMode(true);process.stdin.resume();process.stdin.setEncoding('utf8');
+const password=await new Promise(resolve=>{let value='';const read=chunk=>{for(const char of chunk){if(char==='\u0003'){process.stdin.setRawMode(false);process.exit(130);}if(char==='\r'||char==='\n'){process.stdin.off('data',read);process.stdin.setRawMode(false);process.stdin.pause();process.stdout.write('\n');resolve(value);return;}if(char==='\u007f'||char==='\b'){if(value){value=value.slice(0,-1);process.stdout.write('\b \b');}}else if(char>=' '){value+=char;process.stdout.write('*');}}};process.stdin.on('data',read);});
+await setPassword(path.join(path.dirname(fileURLToPath(import.meta.url)),'data'),username,password);console.log('Đã lưu hash mật khẩu. Khởi động lại server để áp dụng.');

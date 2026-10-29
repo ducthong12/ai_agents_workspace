@@ -1,0 +1,99 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {createAuth,setPassword} from '../auth.mjs';
+import {installLocalInstructions} from '../instructions.mjs';
+import {discoverProjects} from '../projects.mjs';
+import {createTaskMonitor,mergeInbox,completedPeers,buildCodePrompt} from '../tasks.mjs';
+import {WORKFLOW_STEPS,WORKFLOW_ID} from '../public/workflow.js';
+import {isInDevName,sortTaskRows,sortPlaneStates,taskBoardColumns,planeColor} from '../public/task-view.js';
+const exec=promisify(execFile);
+async function temp(t){const prefix=path.join(os.tmpdir(),'tn-tests-'),dir=await mkdtemp(prefix);t.after(async()=>{assert.ok(path.resolve(dir).startsWith(prefix));await rm(dir,{recursive:true,force:true});});return dir;}
+test('login hashes password, restricts session cookie, invalidates logout and throttles failures',async t=>{
+ const dir=await temp(t),password='test-password-0123';await setPassword(dir,'admin',password);assert.ok(!(await readFile(path.join(dir,'auth.json'),'utf8')).includes(password));
+ const auth=await createAuth(dir),req={headers:{},socket:{remoteAddress:'test'}};assert.equal(auth.authenticated(req),false);
+ assert.equal((await auth.login(req,'admin','wrong')).status,401);const result=await auth.login(req,'admin',password);assert.equal(result.status,200);assert.match(result.cookie,/HttpOnly; SameSite=Strict/);req.headers.cookie=result.cookie.split(';')[0];assert.equal(auth.authenticated(req),true);auth.logout(req);assert.equal(auth.authenticated(req),false);
+ for(let i=0;i<5;i++)assert.equal((await auth.login(req,'admin','wrong')).status,401);assert.equal((await auth.login(req,'admin',password)).status,429);
+});
+test('local instruction installer preserves shared files, existing local notes and Git exclusions',async t=>{
+ const root=await temp(t);await exec('git',['init','-q',root]);await writeFile(path.join(root,'AGENTS.md'),'shared-rules');await writeFile(path.join(root,'CLAUDE.md'),'shared-claude');await writeFile(path.join(root,'CLAUDE.local.md'),'My own local note\n');
+ await installLocalInstructions(root,'D:/AI-Hub/features');await installLocalInstructions(root,'D:/AI-Hub/features');
+ assert.equal(await readFile(path.join(root,'AGENTS.md'),'utf8'),'shared-rules');assert.equal(await readFile(path.join(root,'CLAUDE.md'),'utf8'),'shared-claude');const local=await readFile(path.join(root,'CLAUDE.local.md'),'utf8');assert.match(local,/My own local note/);assert.equal(local.match(/tn-local-docs:start/g).length,1);
+ assert.match(local,/@AGENTS.md/);assert.equal(local.match(/tn-abtask-roles:start/g).length,1);assert.match(local,/Claude creates the detailed plan/);await writeFile(path.join(root,'CLAUDE.local.md'),local.replace('@AGENTS.md',''));await installLocalInstructions(root,'D:/AI-Hub/features');assert.match(await readFile(path.join(root,'CLAUDE.local.md'),'utf8'),/@AGENTS.md/);const {stdout}=await exec('git',['-C',root,'check-ignore','AGENTS.override.md','CLAUDE.local.md']);assert.match(stdout,/AGENTS.override.md/);assert.match(stdout,/CLAUDE.local.md/);
+});
+test('workspace discovery finds repos including worktree .git files without descending dependencies',async t=>{
+ const root=await temp(t);await mkdir(path.join(root,'one','.git'),{recursive:true});await mkdir(path.join(root,'group','two'),{recursive:true});await writeFile(path.join(root,'group','two','.git'),'gitdir: elsewhere');await mkdir(path.join(root,'node_modules','hidden','.git'),{recursive:true});
+ assert.deepEqual((await discoverProjects(root)).map(p=>p.name),['one','two']);
+});
+test('inbox merge preserves phase and unread New across refresh, retains history, marks only new IDs',()=>{
+ const old={tasks:[{id:'1',phase:'review',isNew:false},{id:'gone',phase:'done'}]};const next=mergeInbox(old,{invitations:[{id:'1',title:'one',plane:{key:'ABCORE-1'}},{id:'2',title:'two',plane:{key:'ABCOMERCIA-2'}}]},'2026-10-29T00:00:00.000Z');
+ assert.equal(next.tasks[0].phase,'review');assert.equal(next.tasks[0].isNew,false);assert.equal(next.tasks[1].isNew,true);assert.equal(next.tasks[1].projectCode,'ABCOMERCIA');assert.equal(next.tasks[2].available,false);assert.equal(next.nextScanAt,'2026-10-29T01:00:00.000Z');
+});
+async function fixture(t,{dispatchFailure=false,assignees=['me'],planeOutageAfterFirst=false,identityAfterFirst=null,dispatchGate=null,onCreate=null,activeThread=null,claudeDesktop=null}={}){
+ const base=await temp(t),data=path.join(base,'data');await writeFile(path.join(base,'invitations.json'),JSON.stringify({invitations:[],waiting:[],syncedAt:'2026-10-29T00:00:00Z'}));const calls=[];let state='todo',identityCalls=0,dispatchAttempts=0;
+ const project={projectId:'desktop-p',projectKind:'local',label:'Repo',path:'G:/Work/repo',hostId:'local'};
+ const connect=async(bin,name)=>({close(){},async call(tool,args){calls.push({name,tool,args});
+  if(tool==='task_inbox')return {invitations:[{id:'task',title:'Implement',plane:{key:'ABCORE-1'}}]};
+  if(tool==='member'){identityCalls++;return {id:identityCalls>1&&identityAfterFirst?identityAfterFirst:'me',email:'me@example.test',display_name:'Me'};}if(tool==='project'){if(planeOutageAfterFirst&&identityCalls>1)throw Error('HTTP 502');return {result:{results:[{id:'plane-p',identifier:'ABCORE'}]}};}
+  if(tool==='state')return {result:{results:[{id:'todo',name:'Todo',group:'backlog'},{id:'doing',name:'Ready for Dev',group:'unstarted'},{id:'dev',name:'In Dev',group:'started'},{id:'testing',name:'Ready for Testing',group:'started'}]}};
+  if(tool==='workitem'){if(args.action==='update'){state=args.state;return {};}if(args.action==='retrieve')return {result:{id:'workitem',state,assignees}};return {result:{results:[{id:'workitem',sequence_id:1,state,assignees}]}};}
+  if(tool==='list_projects')return {projects:[project]};if(tool==='task_get')return {title:'Implement'};if(tool==='task_accept')return {};
+  if(tool==='list_threads')return {threads:activeThread?[activeThread]:[]};if(tool==='read_thread')return {thread:activeThread};if(tool==='create_thread'){dispatchAttempts++;onCreate?.();if(dispatchGate)await dispatchGate;if(typeof dispatchFailure==='function'?dispatchFailure(dispatchAttempts):dispatchFailure)throw Error('ambiguous transport timeout');return {threadId:'peer',hostId:'local'};}
+  if(tool==='wait_threads')return {results:[{threadId:'peer',status:'completed'}]};if(tool==='navigate_to_codex_page')return {};
+  throw Error('Unexpected call '+tool);
+ }});return {monitor:await createTaskMonitor({cli:{Codex:'fake'},base,data,connect,workspaceRoot:base,claudeDesktop}),calls,base,data,connect};
+}
+test('refresh never accepts work; Plane update verifies state; Code dispatches both roles and moves through review/done',async t=>{
+ const {monitor,calls}=await fixture(t);let s=await monitor.refresh();assert.equal(s.tasks[0].isNew,true);assert.ok(!calls.some(c=>c.tool==='task_accept'));assert.ok(!calls.some(c=>c.name==='codex_app'));await assert.rejects(monitor.changePlaneState('task','invalid'));await monitor.changePlaneState('task','doing');assert.equal((await monitor.snapshot()).tasks[0].planeItem.stateName,'Ready for Dev');
+ s=await monitor.code('task');assert.equal(s.tasks[0].phase,'coding');assert.equal(s.tasks[0].provider,'Claude + Codex');assert.equal(s.tasks[0].workflow,WORKFLOW_ID);assert.equal(s.tasks[0].isNew,false);const dispatched=calls.find(c=>c.tool==='create_thread');assert.equal(dispatched.args.target.type,'projectless');assert.match(dispatched.args.prompt,/Workspace tìm repo/);assert.match(dispatched.args.prompt,/Claude Code CLI/);await assert.rejects(monitor.code('task'));
+ await monitor.pollDesktop();assert.equal((await monitor.snapshot()).tasks[0].phase,'review');await monitor.phase('task','done');assert.equal((await monitor.snapshot()).tasks[0].phase,'done');assert.equal(calls.filter(c=>c.tool==='task_accept').length,1);assert.ok(!calls.some(c=>c.tool==='task_submit'));
+});
+test('ambiguous desktop dispatch blocks accidental duplicate chats until manual recovery',async t=>{
+ const {monitor,calls}=await fixture(t,{dispatchFailure:true});await monitor.refresh();await assert.rejects(monitor.code('task'),/timeout/);assert.equal((await monitor.snapshot()).tasks[0].dispatchUncertain,true);await assert.rejects(monitor.code('task'));assert.equal(calls.filter(c=>c.tool==='create_thread').length,1);await monitor.phase('task','todo');assert.equal((await monitor.snapshot()).tasks[0].dispatchUncertain,false);
+});
+test('desktop attention does not count as completion',()=>{assert.equal(completedPeers({results:[{threadId:'a',status:'needs_attention'},{threadId:'b',status:'completed'}]}).has('a'),false);assert.ok(completedPeers({threadId:'b',completed:true}).has('b'));});
+test('In Dev and commercial equivalent receive stable priority without promoting Ready for Dev',()=>{
+ const rows=[{id:'ready',planeItem:{stateName:'Ready for Dev'}},{id:'active',planeItem:{stateName:'In Dev'}},{id:'commercial',planeItem:{stateName:'Đang phát triển'}},{id:'new',planeItem:{stateName:'New'}}];
+ assert.deepEqual(sortTaskRows(rows).map(t=>t.id),['active','commercial','ready','new']);assert.equal(rows[0].id,'ready');assert.equal(isInDevName('Ready for Dev'),false);assert.equal(isInDevName(' IN DEV '),true);assert.equal(sortPlaneStates([{name:'New'},{name:'In Dev'}])[0].name,'In Dev');
+});
+test('New stays above In Dev, newest unseen first; marking seen restores State priority',()=>{
+ const rows=[{id:'active',isNew:false,planeItem:{stateName:'In Dev'}},{id:'older-new',isNew:true,firstSeenAt:'2026-10-29T01:00:00Z',planeItem:{stateName:'In Dev'}},{id:'newest',isNew:true,firstSeenAt:'2026-10-29T02:00:00Z',planeItem:{stateName:'New'}},{id:'missing'}];
+ assert.deepEqual(sortTaskRows(rows).map(t=>t.id),['newest','older-new','active','missing']);const seen=rows.map(t=>({...t,isNew:false}));assert.deepEqual(sortTaskRows(seen).map(t=>t.id),['older-new','active','newest','missing']);
+});
+test('flow shown to user and dispatched prompt share ordered AI ownership and environment rules',()=>{
+ assert.deepEqual(WORKFLOW_STEPS.map(s=>s.owner),['Claude','Claude','Codex','Claude','Codex','Bạn']);
+ const prompt=buildCodePrompt({id:'t',ticket:'ABCORE-1',title:'Test',description:'Requirements',url:'https://example.test'}, {path:'G:/Work'});
+ let last=-1;for(const [i,step] of WORKFLOW_STEPS.entries()){const at=prompt.indexOf(`${i+1}. ${step.owner}: ${step.title}`);assert.ok(at>last);last=at;}
+ for(const expected of ['Figma','figma_context/get_figma_data','playwright-llm/browser_task','MQLens','cshub-stg','không truy cập production','Không tự task_submit','plan.md','handoff.md'])assert.ok(prompt.includes(expected),expected);
+ assert.equal((prompt.match(/Phân vai AB Task bắt buộc/g)||[]).length,1);
+});
+test('task statistics expose only current Plane assignee and block actions on somebody else task',async t=>{const {monitor,calls}=await fixture(t,{assignees:['another-user']});const s=await monitor.refresh();assert.equal(s.identity.id,'me');assert.equal(s.tasks.length,0);assert.equal((await monitor.snapshot()).tasks.length,0);await assert.rejects(monitor.code('task'));await assert.rejects(monitor.phase('task','done'));await assert.rejects(monitor.changePlaneState('task','doing'));assert.ok(!calls.some(c=>c.tool==='task_accept'||c.tool==='create_thread'));});
+test('boards group code phases or Plane states, keep New first, and sanitize state colors',()=>{const tasks=[{id:'old',phase:'todo',projectCode:'ABCORE',planeItem:{stateId:'dev',stateName:'In Dev'}},{id:'new',phase:'todo',isNew:true,projectCode:'ABCORE',planeItem:{stateId:'new',stateName:'New'}}],states={ABCORE:{states:[{id:'dev',name:'In Dev',group:'started',color:'#abc'},{id:'new',name:'New',group:'backlog',color:'#ff9900'}]}};assert.equal(taskBoardColumns(tasks,'phase',states)[0].tasks[0].id,'new');assert.equal(taskBoardColumns(tasks,'phase',states).length,5);assert.equal(taskBoardColumns(tasks,'plane',states)[0].stateName,'New');assert.equal(planeColor({color:'#abc'}),'#aabbcc');assert.equal(planeColor({color:'red;background:url(secret)'}),'#94a3b8');});
+
+test('Plane outage preserves verified own task without showing somebody else data',async t=>{const {monitor}=await fixture(t,{planeOutageAfterFirst:true});await monitor.refresh();const r=await monitor.refresh();assert.equal(r.tasks.length,1);assert.equal(r.tasks[0].assignedToMe,true);assert.match(r.error,/Chưa xác minh/);});
+test('switching Plane identity while backend fails hides previous account tasks',async t=>{const {monitor}=await fixture(t,{planeOutageAfterFirst:true,identityAfterFirst:'another-user'});await monitor.refresh();const r=await monitor.refresh();assert.equal(r.identity.id,'another-user');assert.equal(r.tasks.length,0);});
+
+
+test('In Dev and later reject Code/status changes before any task acceptance',async t=>{const {monitor,calls}=await fixture(t);await monitor.refresh();await monitor.changePlaneState('task','dev');await assert.rejects(monitor.startCode('task'),/trước In Dev/);await assert.rejects(monitor.phase('task','coding'),/trước In Dev/);assert.ok(!calls.some(c=>c.tool==='task_accept'||c.tool==='create_thread'));});
+test('background Code returns while Desktop is pending and blocks duplicate starts',async t=>{let release,onStarted;const gate=new Promise(r=>release=r),started=new Promise(r=>onStarted=r);const {monitor,calls}=await fixture(t,{dispatchGate:gate,onCreate:onStarted});await monitor.refresh();try{const s=await monitor.startCode('task');assert.equal(s.tasks[0].launching,true);await started;await assert.rejects(monitor.startCode('task'),/đang chạy/);assert.equal((await monitor.snapshot()).tasks[0].launchStage,'Mở chat Codex Desktop');}finally{release();}for(let i=0;i<40;i++){if((await monitor.snapshot()).tasks[0].phase==='coding')break;await new Promise(r=>setTimeout(r,10));}assert.equal((await monitor.snapshot()).tasks[0].phase,'coding');assert.equal(calls.filter(c=>c.tool==='create_thread').length,1);});
+
+
+test('Code eligibility follows Plane groups and refuses unknown or In Dev states',async()=>{const {canCodeTask}=await import('../public/task-view.js');for(const [name,group,expected] of [['New','backlog',true],['Ready for Dev','unstarted',true],['Đã chốt, chờ triển khai','unstarted',true],['In Dev','started',false],['Đang phát triển','started',false],['Ready for Testing','started',false],['Ready for UAT','started',false],['Released','completed',false],['Cancelled','cancelled',false],['Unknown',null,false],['In Dev','unstarted',false]])assert.equal(canCodeTask({projectCode:'P',planeItem:{stateId:'s'}},{P:{states:[{id:'s',name,group}]}}),expected,name);});
+test('a stopped server releases preparing status but preserves uncertain dispatch protection',async t=>{const {monitor,base,data,connect}=await fixture(t);await monitor.refresh();const file=path.join(data,'tasks.json'),s=JSON.parse(await readFile(file,'utf8'));Object.assign(s.tasks[0],{launching:true,launchPid:2147483647,dispatchUncertain:true,launchStage:'Mở chat Codex Desktop'});await writeFile(file,JSON.stringify(s));const resumed=await createTaskMonitor({cli:{Codex:'fake'},base,data,connect,workspaceRoot:base});const item=(await resumed.snapshot()).tasks[0];assert.equal(item.launching,false);assert.equal(item.dispatchUncertain,true);assert.match(item.codeError,/Máy chủ đã dừng/);await assert.rejects(resumed.startCode('task'),/chưa rõ/);});
+
+
+async function waitForLaunch(monitor){for(let i=0;i<100;i++){const s=await monitor.snapshot();if(!s.tasks[0].launching)return s.tasks[0];await new Promise(r=>setTimeout(r,10));}throw Error('Test launch did not finish');}
+test('Retry accepted In Dev failure requires confirmation, creates only one replacement, never accepts twice',async t=>{const {monitor,calls}=await fixture(t,{dispatchFailure:n=>n===1});await monitor.refresh();await assert.rejects(monitor.code('task'));await monitor.changePlaneState('task','dev');await assert.rejects(monitor.retry('task',false),/xác nhận/);const s=await monitor.retry('task',true);assert.equal(s.tasks[0].launching,true);const done=await waitForLaunch(monitor);assert.equal(done.threadId,'peer',JSON.stringify(done));assert.equal(done.dispatchUncertain,false);assert.equal(calls.filter(c=>c.tool==='task_accept').length,1);assert.equal(calls.filter(c=>c.tool==='create_thread').length,2);});
+test('Retry reconnects a matching existing Desktop session and does not create another',async t=>{const activeThread={id:'existing',kind:'codex',hostId:'local',title:'ABCORE-1 · Claude + Codex',createdAt:Date.now()/1000+1,preview:'Task AB: task',cwd:'G:/Work/pending'};const {monitor,calls}=await fixture(t,{dispatchFailure:true,activeThread});await monitor.refresh();await assert.rejects(monitor.code('task'));await monitor.changePlaneState('task','dev');await monitor.retry('task',true);const done=await waitForLaunch(monitor);assert.equal(done.threadId,'existing',JSON.stringify(done));assert.equal(calls.filter(c=>c.tool==='create_thread').length,1);assert.equal(calls.filter(c=>c.tool==='task_accept').length,1);assert.ok(calls.some(c=>c.tool==='navigate_to_codex_page'&&c.args.threadId==='existing'));});
+test('Retry cannot reopen a task that has advanced to testing',async t=>{const {monitor,calls}=await fixture(t,{dispatchFailure:true});await monitor.refresh();await assert.rejects(monitor.code('task'));await monitor.changePlaneState('task','testing');await assert.rejects(monitor.retry('task',true),/đủ điều kiện Retry/);assert.equal(calls.filter(c=>c.tool==='create_thread').length,1);});
+
+test('Retry matches dispatch directory even if the existing Desktop title was renamed',async t=>{const activeThread={id:'renamed',kind:'codex',hostId:'local',title:'Đã đổi tên',createdAt:1,preview:''};const {monitor,calls}=await fixture(t,{dispatchFailure:true,activeThread});await monitor.refresh();await assert.rejects(monitor.code('task'));activeThread.cwd='C:/Codex/'+(await monitor.snapshot()).tasks[0].dispatchDirectory;await monitor.retry('task',true);const done=await waitForLaunch(monitor);assert.equal(done.threadId,'renamed',JSON.stringify(done));assert.equal(calls.filter(c=>c.tool==='create_thread').length,1);});
+
+test('Retry reacquires the same task if its lease expired back to open',async t=>{const {monitor,calls,data}=await fixture(t,{dispatchFailure:n=>n===1});await monitor.refresh();await assert.rejects(monitor.code('task'));const file=path.join(data,'tasks.json'),s=JSON.parse(await readFile(file,'utf8'));s.tasks[0].owned=false;s.tasks[0].status='open';await writeFile(file,JSON.stringify(s));await monitor.retry('task',true);const done=await waitForLaunch(monitor);assert.equal(done.threadId,'peer');assert.equal(done.owned,true);assert.equal(calls.filter(c=>c.tool==='task_accept').length,2);});
+
+
+test('Claude default opens a draft, does not accept work or create Codex, links only after a real session appears',async t=>{let linked=null;const drafts=[];const claudeDesktop={async launch(input){drafts.push(input);return {id:'draft',openedAt:new Date().toISOString()};},async findSession(){return linked;}};const {monitor,calls}=await fixture(t,{claudeDesktop});await monitor.refresh();await monitor.startCode('task');const pending=await waitForLaunch(monitor);assert.equal(pending.awaitingDesktop,true);assert.equal(pending.phase,'todo');assert.equal(drafts.length,1);assert.match(drafts[0].prompt,/Claude Code Desktop/);assert.ok(!calls.some(c=>c.tool==='task_accept'||c.tool==='create_thread'));linked={nativeId:'local-real',cliSessionId:'cli-real'};await monitor.pollDesktop();const active=(await monitor.snapshot()).tasks[0];assert.equal(active.phase,'coding');assert.equal(active.claudeSessionId,'local-real');assert.equal(active.awaitingDesktop,false);});
