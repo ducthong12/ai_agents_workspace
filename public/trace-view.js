@@ -7,7 +7,7 @@ function budgetMarkup(b){if(!b)return '';return '<section class="budget-trace"><
 export function traceMarkup(d){
  const engine=d.hasEngine??Boolean(d.logUpdatedAt||d.stage||d.repo||d.lastActivity),task=d.task,status={running:'Đang xử lý',blocked:'Cần kiểm tra',review:'Chờ review',done:'Đã xong bước',waiting:'Chờ gửi trong Claude Desktop',observed:'Dấu vết từ log'}[d.status]||'Chưa có dữ liệu';
  const fields=task?[['Ticket',task.ticket],['State Plane',task.planeState||'Chưa xác minh'],['Phiên Desktop',task.threadId||(task.clientThreadId?'Đang tạo · '+task.clientThreadId:'Chưa nhận được ID phiên')],['Nhận AB Task',task.acceptedAt?date(task.acceptedAt):'Chưa nhận']]:[];
- if(task?.workspace)fields.push(['Workspace yêu cầu',task.workspace]);
+ if(task?.workspace)fields.push(['Workspace yêu cầu',task.workspace]);if(task?.claudeFallback)fields.push(['Fallback','Claude không kết nối được ('+task.claudeFallback+') · đã chạy bằng Codex Desktop']);
  if(engine)for(const [label,value] of [['Thư mục đang làm',d.repo],['Branch ghi nhận',d.branch],['File gần nhất',d.file],['Tool gần nhất',d.lastTool],['Hoạt động cuối',d.lastActivity?date(d.lastActivity):null]])if(value)fields.push([label,value]);
  const flow=traceChart(d);
  const events=d.events?.length?'<h3 class="trace-section-title">Tiến trình khởi động</h3><ol class="trace-history">'+d.events.map(e=>'<li class="'+(e.status==='failed'?'failed':e.status==='done'?'done':'running')+'"><div><strong>'+esc(e.label)+'</strong><span>'+esc({failed:'Lỗi / chưa xác nhận',done:'Đã ghi nhận',running:'Đang chờ'}[e.status]||e.status)+'</span></div><time>'+esc(date(e.endedAt||e.at))+'</time>'+(e.detail?'<p>'+esc(e.detail)+'</p>':'')+'</li>').join('')+'</ol>':'';

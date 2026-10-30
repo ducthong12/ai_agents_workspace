@@ -33,7 +33,7 @@ test('inbox merge preserves phase and unread New across refresh, retains history
  const old={tasks:[{id:'1',phase:'review',isNew:false},{id:'gone',phase:'done'}]};const next=mergeInbox(old,{invitations:[{id:'1',title:'one',plane:{key:'ABCORE-1'}},{id:'2',title:'two',plane:{key:'ABCOMERCIA-2'}}]},'2026-10-29T00:00:00.000Z');
  assert.equal(next.tasks[0].phase,'review');assert.equal(next.tasks[0].isNew,false);assert.equal(next.tasks[1].isNew,true);assert.equal(next.tasks[1].projectCode,'ABCOMERCIA');assert.equal(next.tasks[2].available,false);assert.equal(next.nextScanAt,'2026-10-29T01:00:00.000Z');
 });
-async function fixture(t,{dispatchFailure=false,assignees=['me'],planeOutageAfterFirst=false,identityAfterFirst=null,dispatchGate=null,onCreate=null,activeThread=null,claudeDesktop=null}={}){
+async function fixture(t,{dispatchFailure=false,assignees=['me'],planeOutageAfterFirst=false,identityAfterFirst=null,dispatchGate=null,onCreate=null,activeThread=null,claudeDesktop=null,claudeReachable=null}={}){
  const base=await temp(t),data=path.join(base,'data');await writeFile(path.join(base,'invitations.json'),JSON.stringify({invitations:[],waiting:[],syncedAt:'2026-10-29T00:00:00Z'}));const calls=[];let state='todo',identityCalls=0,dispatchAttempts=0;
  const project={projectId:'desktop-p',projectKind:'local',label:'Repo',path:'G:/Work/repo',hostId:'local'};
  const connect=async(bin,name)=>({close(){},async call(tool,args){calls.push({name,tool,args});
@@ -45,7 +45,7 @@ async function fixture(t,{dispatchFailure=false,assignees=['me'],planeOutageAfte
   if(tool==='list_threads')return {threads:activeThread?[activeThread]:[]};if(tool==='read_thread')return {thread:activeThread};if(tool==='create_thread'){dispatchAttempts++;onCreate?.();if(dispatchGate)await dispatchGate;if(typeof dispatchFailure==='function'?dispatchFailure(dispatchAttempts):dispatchFailure)throw Error('ambiguous transport timeout');return {threadId:'peer',hostId:'local'};}
   if(tool==='wait_threads')return {results:[{threadId:'peer',status:'completed'}]};if(tool==='navigate_to_codex_page')return {};
   throw Error('Unexpected call '+tool);
- }});return {monitor:await createTaskMonitor({cli:{Codex:'fake'},base,data,connect,workspaceRoot:base,claudeDesktop}),calls,base,data,connect};
+ }});return {monitor:await createTaskMonitor({cli:{Codex:'fake'},base,data,connect,workspaceRoot:base,claudeDesktop,claudeReachable}),calls,base,data,connect};
 }
 test('refresh never accepts work; Plane update verifies state; Code dispatches both roles and moves through review/done',async t=>{
  const {monitor,calls}=await fixture(t);let s=await monitor.refresh();assert.equal(s.tasks[0].isNew,true);assert.ok(!calls.some(c=>c.tool==='task_accept'));assert.ok(!calls.some(c=>c.name==='codex_app'));await assert.rejects(monitor.changePlaneState('task','invalid'));await monitor.changePlaneState('task','doing');assert.equal((await monitor.snapshot()).tasks[0].planeItem.stateName,'Ready for Dev');
@@ -97,3 +97,12 @@ test('Retry reacquires the same task if its lease expired back to open',async t=
 
 
 test('Claude default opens a draft, does not accept work or create Codex, links only after a real session appears',async t=>{let linked=null;const drafts=[];const claudeDesktop={async launch(input){drafts.push(input);return {id:'draft',openedAt:new Date().toISOString()};},async findSession(){return linked;}};const {monitor,calls}=await fixture(t,{claudeDesktop});await monitor.refresh();await monitor.startCode('task');const pending=await waitForLaunch(monitor);assert.equal(pending.awaitingDesktop,true);assert.equal(pending.phase,'todo');assert.equal(drafts.length,1);assert.match(drafts[0].prompt,/Claude Code Desktop/);assert.ok(!calls.some(c=>c.tool==='task_accept'||c.tool==='create_thread'));linked={nativeId:'local-real',cliSessionId:'cli-real'};await monitor.pollDesktop();const active=(await monitor.snapshot()).tasks[0];assert.equal(active.phase,'coding');assert.equal(active.claudeSessionId,'local-real');assert.equal(active.awaitingDesktop,false);});
+
+test('Claude unreachable (no VPN) moves the task to Codex Desktop with a visible fallback, never opening a Claude draft',async t=>{const drafts=[];const claudeDesktop={async launch(input){drafts.push(input);return {id:'draft'};},async findSession(){return null;}};
+ const {monitor,calls}=await fixture(t,{claudeDesktop,claudeReachable:async()=>({ok:false,reason:'ENOTFOUND'})});await monitor.refresh();const s=await monitor.code('task');const task=s.tasks[0];
+ assert.equal(drafts.length,0);assert.equal(task.phase,'coding');assert.equal(task.threadId,'peer');assert.equal(task.claudeFallback.reason,'ENOTFOUND');assert.match(task.provider,/fallback Claude/);
+ const created=calls.find(c=>c.tool==='create_thread');assert.match(created.args.prompt,/FALLBACK: Claude không kết nối được \(ENOTFOUND/);assert.match(created.args.prompt,/CHẾ ĐỘ FALLBACK/);assert.match(created.args.title,/fallback Claude/);
+ assert.ok(task.launchEvents.some(e=>/Claude không kết nối được/.test(e.label)));
+ const {taskTrace}=await import('../trace.mjs');const {traceMarkup}=await import('../public/trace-view.js');assert.match(traceMarkup(taskTrace(task)),/Fallback/);});
+test('reachable Claude keeps the draft flow and no fallback prompt',async t=>{const drafts=[];const claudeDesktop={async launch(input){drafts.push(input);return {id:'draft'};},async findSession(){return null;}};
+ const {monitor,calls}=await fixture(t,{claudeDesktop,claudeReachable:async()=>({ok:true})});await monitor.refresh();await monitor.startCode('task');const pending=await waitForLaunch(monitor);assert.equal(pending.awaitingDesktop,true);assert.equal(drafts.length,1);assert.ok(!/FALLBACK/.test(drafts[0].prompt));assert.equal(pending.claudeFallback,null);assert.ok(!calls.some(c=>c.tool==='create_thread'));});

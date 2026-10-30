@@ -1,5 +1,7 @@
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import path from 'node:path';
+import {readdir,stat} from 'node:fs/promises';
 const exec=promisify(execFile);
 export async function discoverCLIs(){
   const found={};
@@ -7,6 +9,8 @@ export async function discoverCLIs(){
     const configured=process.env[provider==='Codex'?'TN_CODEX_BIN':'TN_CLAUDE_BIN'];if(configured){found[provider]=configured;continue;}
     try{const {stdout}=await exec(process.platform==='win32'?'where.exe':'which',[name],{windowsHide:true,timeout:5000});const bin=stdout.trim().split(/\r?\n/).find(x=>process.platform!=='win32'||x.endsWith('.exe'));if(bin)found[provider]=bin;}catch{}
   }
+  // Codex Desktop ships its own codex.exe under a versioned folder; use the newest when not on PATH.
+  if(!found.Codex&&process.env.LOCALAPPDATA){const root=path.join(process.env.LOCALAPPDATA,'OpenAI','Codex','bin');try{let best=null;for(const d of await readdir(root)){const bin=path.join(root,d,'codex.exe');try{const m=(await stat(bin)).mtimeMs;if(!best||m>best.m)best={bin,m};}catch{}}if(best)found.Codex=best.bin;}catch{}}
   return found;
 }
 export function commandArgs(provider,mode,documentationRoot){

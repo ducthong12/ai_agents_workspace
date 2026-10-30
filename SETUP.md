@@ -2,6 +2,15 @@
 
 Source: https://github.com/ducthong12/ai_agents_workspace
 
+Trên máy hiện tại, source đang sử dụng nằm tại `G:\Work\ai_agents_workspace`. Chạy `start.cmd` trong thư mục này, hoặc mở PowerShell và chạy:
+
+```powershell
+cd G:\Work\ai_agents_workspace
+node server.mjs
+```
+
+Đăng nhập và dữ liệu local được giữ trong `data/` (không đưa lên Git). Tài liệu AI dùng chung vẫn nằm tại `G:\Work\docs\AI`. Lịch quét AB Task của máy này đã chuyển sang script trong source mới. Bản cũ trong thư mục Codex được giữ làm bản dự phòng; chỉ chạy một bản server và một lịch quét để dữ liệu không bị tách đôi.
+
 ## 1. Cài và đăng nhập trên từng máy
 
 - Node.js 22 trở lên; bản này được kiểm tra với Node.js 24. Không cần cài thư viện npm.

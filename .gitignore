@@ -9,3 +9,4 @@ CLAUDE.local.md
 test-results/
 playwright-report/
 AGENTS.override.md
+.playwright-mcp/

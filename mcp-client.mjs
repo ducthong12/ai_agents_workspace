@@ -9,9 +9,8 @@ export function unpack(result){
   const text=texts.join('\n');
   try{return JSON.parse(text);}catch{return text;}
 }
-export async function connectServer(codexBinary,name,root,{desktopAction=false}={}){
-  const {stdout}=await exec(codexBinary,['mcp','get',name,'--json'],{cwd:root,windowsHide:true,timeout:10000,maxBuffer:2_000_000});
-  const definition=JSON.parse(stdout);if(definition.enabled===false&&!(name==='codex_app'&&desktopAction))throw Error('MCP '+name+' đang tắt trong cấu hình');
+export async function connectServer(codexBinary,name,root,{desktopAction=false,transport}={}){
+  const definition=transport?{transport}:JSON.parse((await exec(codexBinary,['mcp','get',name,'--json'],{cwd:root,windowsHide:true,timeout:10000,maxBuffer:2_000_000})).stdout);if(definition.enabled===false&&!(name==='codex_app'&&desktopAction))throw Error('MCP '+name+' đang tắt trong cấu hình');
   const config=definition.transport;if(config.type!=='stdio')throw Error('Bridge yêu cầu transport stdio: '+name);
   const env={...process.env,...config.env};for(const k of Object.keys(env))env[k]=expand(env[k],env);
   if(name==='codex_app'&&desktopAction)env.CODEX_APP_TOOLS_CALLER_HOST_ID='local';

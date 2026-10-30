@@ -7,9 +7,16 @@ export const WORKFLOW_STEPS=[
   {id:'ui-qc',owner:'Codex',title:'Kiểm thử UI tích hợp',detail:'Playwright LLM: luồng người dùng, responsive và dữ liệu thực tế.'},
   {id:'review',owner:'Bạn',title:'Review → Done',detail:'Xem diff, kết quả test và tài liệu; xác nhận hoàn tất.'}
 ];
-export function workflowInstructions({abTask=true}={}){return `${abTask?'Phân vai AB Task bắt buộc':'Luồng phối hợp Claude và Codex'} (${WORKFLOW_ID}):
-${WORKFLOW_STEPS.map((s,i)=>`${i+1}. ${s.owner}: ${s.title}. ${s.detail}`).join('\n')}
-
+// Harness config (server: data/workspace.json, browser: /api/config). Module-level so every prompt builder sees the same setup.
+let harness={steps:{},agents:[]};
+export function configureHarness(h){harness={steps:h?.steps||{},agents:h?.agents||[]};}
+export const activeSteps=()=>WORKFLOW_STEPS.filter(s=>harness.steps[s.id]?.enabled!==false);
+export const disabledStepIds=()=>WORKFLOW_STEPS.filter(s=>harness.steps[s.id]?.enabled===false).map(s=>s.id);
+export const agentLabel=a=>a.name+' · '+(a.location==='remote'?a.host+(a.port?':'+a.port:''):'local máy này');
+const stepAgent=id=>harness.agents.find(a=>a.id===harness.steps[id]?.agentId);
+export function workflowInstructions({abTask=true,claudeUnavailable=false}={}){const off=WORKFLOW_STEPS.filter(s=>disabledStepIds().includes(s.id));return `${abTask?'Phân vai AB Task bắt buộc':'Luồng phối hợp Claude và Codex'} (${WORKFLOW_ID}):
+${activeSteps().map((s,i)=>`${i+1}. ${s.owner}: ${s.title}. ${s.detail}${stepAgent(s.id)?` Agent: ${agentLabel(stepAgent(s.id))}.`:''}`).join('\n')}
+${claudeUnavailable?'CHẾ ĐỘ FALLBACK (website quyết định vì Claude không kết nối được): Codex Desktop là đầu mối và tự làm cả các bước ghi owner Claude (kế hoạch, backend, QC & nhập dữ liệu) theo đúng quy tắc của từng bước. Bỏ qua phần bàn giao qua codex-ui.json/ui-result.md. Ghi rõ "fallback từ Claude" trong handoff.md và summary TN_TRACE. Không tự mở lại Claude hay gọi AI khác.\n':''}${off.length?`Harness đã tắt: ${off.map(s=>s.id+' ('+s.title+')').join(', ')}. Không thực hiện các bước này; báo TN_TRACE status skipped một lần.\n`:''}
 Claude Code Desktop là đầu mối mặc định. Claude tự lập kế hoạch chi tiết, lưu plan.md trong thư mục feature tài liệu đã cấu hình của dự án trước khi triển khai. Thư mục tài liệu nhãn hàng được chỉ rõ trong file yêu cầu của phiên. Kế hoạch phải có acceptance criteria, danh sách file theo owner, API contract, test và mục dữ liệu cần QC/nhập. Thực hiện lần lượt các bước có liên quan; task chỉ UI hoặc chỉ backend thì ghi rõ bước không áp dụng và lý do, không tự tạo thêm việc. Không chạy hai AI sửa cùng file đồng thời. Mỗi lần bàn giao ghi file đã đổi, contract, kiểm tra đã chạy, việc còn lại và vấn đề chặn.
 
 Claude làm việc trực tiếp trong tab Code của Claude Desktop, giữ cơ chế quyền đang cấu hình trong ứng dụng. Không tự chuyển đầu mối sang Claude Code CLI hoặc Codex Desktop. Claude bàn giao UI qua file codex-ui.json theo đường dẫn trong yêu cầu; website tạo phiên Codex UI riêng, Codex ghi kết quả vào ui-result.md để Claude tiếp tục QC. Trước mỗi bàn giao, website kiểm tra hạn mức gói và context theo phiên; dưới 20% hoặc thiếu số liệu mới thì báo blocked, không tự tạo phiên thay thế hay gọi AI ngoài luồng để né kiểm tra. Giữ tài liệu/kết quả hiện có để tiếp tục khi đủ ngân sách. Thiếu MQLens, Playwright LLM hoặc quyền thì báo blocked; không bypass permissions.

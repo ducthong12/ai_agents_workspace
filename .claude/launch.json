@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tn-workspace",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set NODE_EXTRA_CA_CERTS=C:\\cert\\za-ecc-root-ca.pem&& node server.mjs"],
+      "port": 4317,
+      "url": "http://127.0.0.1:4317"
+    }
+  ]
+}
