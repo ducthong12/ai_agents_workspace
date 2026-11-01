@@ -13,6 +13,42 @@ node server.mjs
 
 ## 1. Cài và đăng nhập trên từng máy
 
+### Chạy bằng Docker Desktop
+
+Khởi động Docker Desktop với Linux containers. Khi đã có `data/auth.json`, chạy trong thư mục source:
+
+```powershell
+docker compose up -d --build
+docker compose ps
+```
+
+Mở http://127.0.0.1:4317. Nếu server Node local đang dùng cổng 4317, dừng server đó trước khi chạy Compose. Tài khoản và dữ liệu hiện có được bind mount từ `./data`; không được đưa vào image. Trên máy mới, tạo tài khoản trước bằng `node configure-login.mjs`, hoặc `docker compose run --rm --no-deps web node configure-login.mjs` trong terminal tương tác sau khi tạo thư mục `data`.
+
+Container dùng Node 24, chạy dưới user `node`, có healthcheck và tự khởi động lại trừ khi đã dừng bằng tay. Cổng trên máy chỉ được publish ở `127.0.0.1`. `TN_BIND_HOST=0.0.0.0` chỉ áp dụng bên trong container; chạy Node trực tiếp vẫn mặc định loopback.
+
+Thư mục cha của source được mount chỉ đọc tại `/workspace` để quét repo/tài liệu; đường dẫn repo trong container phải dùng `/workspace/...`, không dùng `D:\...` hoặc `G:\...`. Bản gom tài liệu riêng của container lưu tại `data/brand-docs`. Bind mount workspace không dùng để sửa code hoặc cài instruction vào repo. Không chạy server Node và container đồng thời với cùng thư mục `data`.
+
+Image chưa cài Claude/Codex CLI, chưa nối MCP của máy Windows và không mở được deep link Desktop bằng `explorer.exe`. Các session/profile trên Windows không được tự mount vào container. Web, đăng nhập và tài liệu có thể dùng trong Docker; chức năng AI/Desktop cần cấu hình tích hợp riêng. Không sao chép credential/profile vào image.
+
+Để Studio đọc được lịch sử Claude/Codex trên máy Windows, chạy bằng Node trên **máy host**:
+
+```powershell
+node configure-docker-host.mjs
+docker compose up -d --build
+```
+
+Script tạo `compose.override.yaml` riêng cho máy (Git bỏ qua), chỉ nối các thư mục session đang tồn tại: Codex sessions/archived_sessions, Claude projects và metadata Claude Desktop. Tất cả mount chỉ đọc; không nối auth, cookie, MCP config hoặc toàn bộ profile. Compose tự đọc file override ở các lần chạy tiếp theo. Script từ chối ghi đè override không do nó tạo.
+
+Studio hiển thị số phiên từng nguồn, lịch sử và model khi metadata có ghi nhận. Danh mục bổ sung từ log chỉ đọc tối đa 64 KB đầu mỗi file và không dùng nội dung chat làm tiêu đề. Đọc nội dung khi chọn phiên, 20 tin/lần. Trong Docker, `TN_STUDIO_READ_ONLY=1` ẩn hành động gửi/tạo/mở Desktop và backend cũng chặn các hành động Studio này. Nguồn lịch sử không có nghĩa CLI/MCP đã kết nối; muốn điều khiển Desktop cần triển khai cầu nối riêng. Chạy Node trực tiếp vẫn giữ chế độ Desktop trước đây.
+
+```powershell
+docker compose logs --tail 100 web
+docker compose stop
+docker compose down
+```
+
+Các lệnh dừng/gỡ container không xoá dữ liệu bind mount trong `data`.
+
 - Node.js 22 trở lên; bản này được kiểm tra với Node.js 24. Không cần cài thư viện npm.
 - Git, Claude Desktop có tab Code, Codex Desktop và Claude Code/Codex CLI.
 - Đăng nhập Claude và Codex riêng trên máy đó. Không chép file credential/token từ máy khác.

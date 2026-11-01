@@ -10,3 +10,4 @@ test-results/
 playwright-report/
 AGENTS.override.md
 .playwright-mcp/
+compose.override.yaml

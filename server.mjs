@@ -90,6 +90,7 @@ async function sync(){
   catch(e){if(syncError!==e.message)logEvent('error','Đồng bộ',e.message);syncError=e.message;}finally{busy=false;}for(const w of usage.warnings||[])if(!seenWarnings.has(w)){seenWarnings.add(w);logEvent('warning','Đọc dữ liệu',w);}
 }
 const port=Number(process.env.PORT || 4317);
+const bindHost=process.env.TN_BIND_HOST || '127.0.0.1';
 function reply(res,status,body,type='application/json; charset=utf-8'){res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"});res.end(type.startsWith('application/json')?JSON.stringify(body):body);}
 async function body(req,limit=600000){let raw='';for await(const c of req){raw+=c;if(Buffer.byteLength(raw)>limit)throw Error('Nội dung quá lớn');}return JSON.parse(raw || '{}');}
 let mutation=Promise.resolve();
@@ -133,13 +134,13 @@ async function handle(req,res){
       if(url.pathname==='/api/budgets/capture')return reply(res,200,await budgets.capture(b));
       if(url.pathname==='/api/studio/import')return reply(res,200,await studio.importChats(b.conversations));
       if(url.pathname==='/api/studio/open')return reply(res,200,await studio.openSession(b.id));
-      if(url.pathname==='/api/studio/send'){let cwd;if(!b.sessionId){const p=[...store.projects,...(store.discoveredProjects||[])].find(p=>p.id===b.projectId&&p.kind!=='library');if(b.projectId&&!p)throw Error('Dự án không hợp lệ');cwd=await realpath(p?.root||store.workspaceRoot||'G:/Work');}return reply(res,200,await studio.send({...b,cwd}));}
+      if(url.pathname==='/api/studio/send'){if(!studio.snapshot().capabilities.send)throw Error('Studio đang ở chế độ xem lịch sử. Tiếp tục trong ứng dụng Claude hoặc Codex trên máy Windows.');let cwd;if(!b.sessionId){const p=[...store.projects,...(store.discoveredProjects||[])].find(p=>p.id===b.projectId&&p.kind!=='library');if(b.projectId&&!p)throw Error('Dự án không hợp lệ');cwd=await realpath(p?.root||store.workspaceRoot||workRoot);}return reply(res,200,await studio.send({...b,cwd}));}
       if(url.pathname==='/api/projects/scan'){const root=await realpath(b.root||store.workspaceRoot||'G:/Work');if(root===path.parse(root).root||root===os.homedir())throw Error('Chọn thư mục workspace cụ thể');store.discoveredProjects=await discoverProjects(root);store.workspaceRoot=root;await save();return reply(res,200,{count:store.discoveredProjects.length,root});}
       if(url.pathname==='/api/tasks/refresh')return reply(res,200,await tasks.refresh());
       if(url.pathname==='/api/tasks/phase')return reply(res,200,await tasks.phase(b.taskId,b.phase));
       if(url.pathname==='/api/tasks/seen'){if(!Array.isArray(b.ids)||!b.ids.every(id=>typeof id==='string'))throw Error('Danh sách task không hợp lệ');return reply(res,200,await tasks.seen(b.ids));}
       if(url.pathname==='/api/tasks/plane-state')return reply(res,200,await tasks.changePlaneState(b.taskId,b.stateId));
-      if(url.pathname==='/api/claude/open'){await claudeDesktop.openNew();return reply(res,200,{ok:true});}
+      if(url.pathname==='/api/claude/open'){if(!studio.snapshot().capabilities.open)throw Error('Mở Claude Desktop trực tiếp trên máy Windows.');await claudeDesktop.openNew();return reply(res,200,{ok:true});}
       if(url.pathname==='/api/tasks/retry')return reply(res,202,await tasks.retry(b.taskId,b.confirmedRetry));
       if(url.pathname==='/api/tasks/code')return reply(res,202,await tasks.startCode(b.taskId));
       if(url.pathname==='/api/tasks/open')return reply(res,200,await tasks.openDesktop(b.taskId));
@@ -185,7 +186,7 @@ async function handle(req,res){
   }catch(e){res.tnError=e.message;reply(res,400,{error:e.message});}
 }
 const server=http.createServer((req,res)=>{if(req.method==='POST'){mutation=mutation.then(()=>handle(req,res)).then(()=>{const name=actionNames[new URL(req.url,'http://x').pathname];if(name)logEvent(res.statusCode<400?'success':'error',name,res.tnError||'Thành công');}).catch(()=>{});}else handle(req,res).catch(()=>{if(!res.headersSent)reply(res,500,{error:'Lỗi máy chủ'});});});
-server.listen(port,'127.0.0.1',()=>console.log(`AI Workspace: http://127.0.0.1:${port}`));
+server.listen(port,bindHost,()=>console.log(`AI Workspace: http://127.0.0.1:${port}`));
 server.on('error',e=>{console.error(e.message);process.exitCode=1;});
 await sync();
 await mcp.refresh(store.projects);

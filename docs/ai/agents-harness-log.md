@@ -21,7 +21,17 @@
 - **Nhật ký** (`#logs`): `GET /api/logs` gồm thao tác POST trên website (success/error, lỗi đã che credential), lỗi đồng bộ (error), cảnh báo đọc dữ liệu mới (warning), lịch sử mở task (success/error), bàn giao Codex UI bị chặn (warning), kết quả giao việc LLM. Lọc theo tag; nav hiện số lỗi. Lưu tối đa 500 sự kiện tại `data/activity-log.json`.
 - Sửa lỗi: regex ID agent mất dấu `\` khiến mỗi lần lưu agent bị cấp ID mới và gán agent trong harness bị xoá.
 
-## File
+## Cập nhật giao diện form trên desktop và mobile
+
+Yêu cầu bổ sung: làm lại form thêm agent để rõ ràng, cân đối trên màn hình lớn. Form dùng ba thẻ radio Claude/Codex/LLM, phần tên và vị trí chạy, khu vực endpoint có điều kiện, hướng dẫn nhập Zalo thu gọn và hàng hành động riêng. Không hiển thị tên biến môi trường hoặc đường dẫn file trong luồng nhập thông thường. Tên/model/key và API lưu agent giữ contract cũ.
+
+Các trường không áp dụng được disable; IP bắt buộc khi chọn remote, URL và model bắt buộc với LLM. Nút lưu chặn nhấn lặp, giữ dữ liệu khi lỗi và reset về Claude sau thành công. Grid hai panel căn đầu để form không bị kéo cao theo bảng agent.
+
+File liên quan: `public/index.html`, `public/style.css`, `public/agents-config.js`.
+
+Kiểm tra thực tế bằng Chromium headless qua Playwright: 21 tổ hợp provider/viewport từ 390 đến 3440 px không tràn ngang; kiểm tra dark/light, chuyển ba provider, remote, URL sai, trường bắt buộc và reset. Ba lần lưu Claude remote/Codex local/LLM được chặn bằng route mock, kiểm tra payload và không tạo agent thật. Không gọi endpoint LLM hay nhập cấu hình Zalo thật để kiểm tra giao diện. Bộ 84 test Node đạt trên Windows và image Linux. Chưa kiểm tra mọi trình duyệt.
+
+## Danh sách file
 server.mjs, tasks.mjs, llm-agent.mjs, mcp-client.mjs, runner.mjs, start.cmd, .gitignore, trace.mjs, public/workflow.js, public/trace-chart.js, public/trace-view.js, public/agents-config.js, public/activity-log.js, public/app.js, public/index.html, public/style.css, test/trace.test.mjs, test/llm-agent.test.mjs, test/workspace.test.mjs.
 
 ## Kiểm tra đã chạy

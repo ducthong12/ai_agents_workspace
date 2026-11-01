@@ -10,6 +10,8 @@ Tạo tài khoản local bằng `node configure-login.mjs` trước lần chạy
 
 Node.js 22+; không cần npm install. Trên máy đã thiết lập, chạy npm start hoặc start.cmd trong thư mục ai-workspace. Trên máy mới hoặc để đổi mật khẩu, dừng server rồi chạy node configure-login.mjs trong terminal tương tác, nhập username/password, sau đó npm start. Source ZIP không chứa data hay credential.
 
+Chạy web bằng Docker Desktop: `docker compose up -d --build`. Xem phần **Chạy bằng Docker Desktop** trong [SETUP.md](SETUP.md) về dữ liệu dùng lại, đường dẫn Linux và giới hạn tích hợp Desktop/MCP.
+
 ## Làm việc với AI
 
 - Giao diện session sidebar như Codex: Codex Desktop và các phiên Code của Claude Desktop được đọc từ máy. Chọn phiên để xem và tiếp tục. Chat thường của Claude dùng nút Nhập chat Claude (.json), tối đa 20 MB; chưa tự đồng bộ chat cloud. Chỉ hiển thị text, không nhập tool/thinking/credential metadata hoặc file đính kèm.
